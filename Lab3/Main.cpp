@@ -71,13 +71,12 @@ int main(int argc, char* argv[])
 	int rowAmount = matrixSize / size;
 	int columnAmount = rowAmount;
 	int tempSize = size*rowAmount;
-	int c;
+	
 	if (rank == 0)
 	{
 		t1 = MPI_Wtime();
-		cout << "\nrowAmount: " << rowAmount << "\n";
 	}
-
+	bool first = true;
 	for (int i = 0; i < tempSize; i += rowAmount)
 	{
 		if (rank == 0)
@@ -87,7 +86,7 @@ int main(int argc, char* argv[])
 			{
 				for (int l = 0; l < columnAmount; l++)
 				{
-					c = 0;
+					int c = 0;
 					for (int j = 0; j < matrixSize; j++)
 					{
 						c += A[i + q][j] * B[j][l];
@@ -107,13 +106,19 @@ int main(int argc, char* argv[])
 				}
 				int *row = new int[matrixSize*rowAmount];
 				int *column = new int[matrixSize*amount];
-				for (int l = 0; l < amount; l++)
+				int n;
+				if (rowAmount > amount)
+					n = rowAmount;
+				else
+					n = amount;
+				for (int l = 0; l < n; l++)
 				{
 					for (int j = 0; j < matrixSize; j++)
 					{
 						if (l < rowAmount)
 							row[j + l*matrixSize] = A[i + l][j];
-						column[j + l*matrixSize] = B[j][m*columnAmount + l + r];
+						if (l < amount)
+							column[j + l*matrixSize] = B[j][m*columnAmount + l + r];
 					}
 				}
 				MPI_Send(row, matrixSize*rowAmount, MPI_INT, m, m, MPI_COMM_WORLD);
@@ -144,10 +149,11 @@ int main(int argc, char* argv[])
 			{
 				amount++;
 			}
-			int * row = new int[matrixSize*amount];
+			int * row = new int[matrixSize*rowAmount];
 			int *column = new int[matrixSize*amount];
 			MPI_Recv(row, matrixSize*rowAmount, MPI_INT, 0, rank, MPI_COMM_WORLD, &rowStatus);
 			MPI_Recv(column, matrixSize*amount, MPI_INT, 0, rank, MPI_COMM_WORLD, &columnStatus);
+
 			int * elemsC = new int[rowAmount*amount];
 			for (int q = 0; q < rowAmount; q++)
 			{
@@ -164,56 +170,14 @@ int main(int argc, char* argv[])
 			MPI_Send(elemsC, rowAmount*amount, MPI_INT, 0, rank, MPI_COMM_WORLD);
 		}
 
-		if (residue > 0 && i + rowAmount >= tempSize)
+		if (first && residue > 0 && i + rowAmount >= tempSize)
 		{
 			i = i + rowAmount- residue;
 			tempSize = matrixSize;
 			rowAmount = residue;
+			first = false;
 		}
 	}
-	MPI_Barrier(MPI_COMM_WORLD);
-
-	//Если матрицу не удалось разделить нацело между всеми потоками,
-	//то еще рассылаем остатки
-	/*for (int r = 0; r < residue; r++)
-	{
-	for (int i = 0; i < matrixSize; i++)
-	{
-	if (rank == 0)
-	{
-	int *row = new int[matrixSize];
-	int *column = new int[matrixSize];
-	for (int j = 0; j < matrixSize; j++)
-	{
-	row[j] = A[i][j];
-	column[j] = B[j][matrixSize - 1 - r];
-	}
-	MPI_Send(row, matrixSize, MPI_INT, size - 1 - r, size - 1 - r, MPI_COMM_WORLD);
-	MPI_Send(column, matrixSize, MPI_INT, size - 1 - r, size - 1 - r, MPI_COMM_WORLD);
-
-	int elem;
-	MPI_Status status;
-	MPI_Recv(&elem, 1, MPI_INT, size - 1 - r, size - 1 - r, MPI_COMM_WORLD, &status);
-	C[i][matrixSize - 1 - r] = elem;
-	}
-	else if (rank == size - 1 - r)
-	{
-	MPI_Status rowStatus, columnStatus;
-	int * row = new int[matrixSize];
-	int *column = new int[matrixSize];
-	MPI_Recv(row, matrixSize, MPI_INT, 0, rank, MPI_COMM_WORLD, &rowStatus);
-	MPI_Recv(column, matrixSize, MPI_INT, 0, rank, MPI_COMM_WORLD, &columnStatus);
-
-	int c = 0;
-	for (int k = 0; k < matrixSize; k++)
-	{
-	c += row[k] * column[k];
-	}
-	MPI_Send(&c, 1, MPI_INT, 0, rank, MPI_COMM_WORLD);
-	}
-	}
-	}
-	*/
 
 	MPI_Barrier(MPI_COMM_WORLD);
 
