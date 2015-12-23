@@ -2,6 +2,8 @@
 #include <mpi.h>
 #include <math.h> 
 #include <iostream>
+#include <cstdlib>
+#include <ctime>
 
 using namespace std;
 
@@ -20,7 +22,7 @@ int** fillInMatrix(int** a, int n)
 	{
 		for (int j = 0; j < n; j++)
 		{
-			a[i][j] = i;
+			a[i][j] = rand() % 100;
 		}
 	}
 	return a;
@@ -100,6 +102,7 @@ int main(int argc, char* argv[])
 			for (int m = 1; m < size; m++)
 			{				
 				int amount = columnAmount;
+				//Если есть остаток, то последним потокам посылаем на 1 больше столбцов
 				if (residue > 0 && size - m <= residue)
 				{
 					amount++;
@@ -137,14 +140,20 @@ int main(int argc, char* argv[])
 						C[i + q][m*columnAmount + l + r] = elemsC[l + amount*q];
 					}
 				}
+				//если m потоку послали на 1 больше столбцов, 
+				//то m+1 поток должен получить столбцы из исходной матрицы со смещением += 1
 				if (amount > columnAmount)
 					r++;
 			}
 		}
 		else
 		{
+			//Все ненулевые потоки принимают части матрицы фиксированного размера,
+			//считают элементы для конечной матрицы и посылают их 0 потоку
 			MPI_Status rowStatus, columnStatus;
 			int amount = columnAmount;
+			//Если остаток > 0 и это один из последних потоков,
+			//то он должен принять на 1 больше столбцов
 			if (residue > 0 && size - rank <= residue)
 			{
 				amount++;
@@ -170,6 +179,8 @@ int main(int argc, char* argv[])
 			MPI_Send(elemsC, rowAmount*amount, MPI_INT, 0, rank, MPI_COMM_WORLD);
 		}
 
+		//Если мы по строкам дошли до конца челочисленного деления,
+		//то надо разослать всем остаток строк
 		if (first && residue > 0 && i + rowAmount >= tempSize)
 		{
 			i = i + rowAmount- residue;
@@ -184,7 +195,7 @@ int main(int argc, char* argv[])
 	if (rank == 0)
 	{
 		t2 = MPI_Wtime();
-		if (matrixSize < 20)
+		if (matrixSize <= 20)
 		{
 			for (int i = 0; i < matrixSize; i++)
 			{
