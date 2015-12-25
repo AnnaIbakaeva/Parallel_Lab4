@@ -22,7 +22,7 @@ int** fillInMatrix(int** a, int n)
 	{
 		for (int j = 0; j < n; j++)
 		{
-			a[i][j] = rand() % 100;
+			a[i][j] = i;// rand() % 100;
 		}
 	}
 	return a;
@@ -65,6 +65,28 @@ int main(int argc, char* argv[])
 		A = fillInMatrix(A, matrixSize);
 		B = fillInMatrix(B, matrixSize);
 		C = fillInZeroMatrix(C, matrixSize);
+		if (matrixSize <= 20)
+		{
+			cout << "\nMatrix A:\n";
+			for (int i = 0; i < matrixSize; i++)
+			{
+				for (int j = 0; j < matrixSize; j++)
+				{
+					cout << A[i][j] << " ";
+				}
+				cout << "\n";
+			}
+			cout << "\nMatrix B:\n";
+			for (int i = 0; i < matrixSize; i++)
+			{
+				for (int j = 0; j < matrixSize; j++)
+				{
+					cout << B[i][j] << " ";
+				}
+				cout << "\n";
+			}
+			cout << "\n";
+		}
 	}
 
 	MPI_Barrier(MPI_COMM_WORLD);
@@ -73,7 +95,7 @@ int main(int argc, char* argv[])
 	int rowAmount = matrixSize / size;
 	int columnAmount = rowAmount;
 	int tempSize = size*rowAmount;
-	
+
 	if (rank == 0)
 	{
 		t1 = MPI_Wtime();
@@ -100,7 +122,7 @@ int main(int argc, char* argv[])
 			int r = 0;
 			//Посылаем потокам части матрицы
 			for (int m = 1; m < size; m++)
-			{				
+			{
 				int amount = columnAmount;
 				//Если есть остаток, то последним потокам посылаем на 1 больше столбцов
 				if (residue > 0 && size - m <= residue)
@@ -126,8 +148,20 @@ int main(int argc, char* argv[])
 				}
 				MPI_Send(row, matrixSize*rowAmount, MPI_INT, m, m, MPI_COMM_WORLD);
 				MPI_Send(column, matrixSize*amount, MPI_INT, m, m, MPI_COMM_WORLD);
-
-
+				//если m потоку послали на 1 больше столбцов, 
+				//то m+1 поток должен получить столбцы из исходной матрицы со смещением += 1
+				if (amount > columnAmount)
+					r++;
+			}
+			r = 0;
+			for (int m = 1; m < size; m++)
+			{
+				int amount = columnAmount;
+				//Если есть остаток, то последним потокам посылаем на 1 больше столбцов
+				if (residue > 0 && size - m <= residue)
+				{
+					amount++;
+				}
 				//Принимаем подсчитанные элементы матрицы от других потоков
 				//и заполняем ими конечную матрицу
 				MPI_Status status;
@@ -140,8 +174,6 @@ int main(int argc, char* argv[])
 						C[i + q][m*columnAmount + l + r] = elemsC[l + amount*q];
 					}
 				}
-				//если m потоку послали на 1 больше столбцов, 
-				//то m+1 поток должен получить столбцы из исходной матрицы со смещением += 1
 				if (amount > columnAmount)
 					r++;
 			}
@@ -183,7 +215,7 @@ int main(int argc, char* argv[])
 		//то надо разослать всем остаток строк
 		if (first && residue > 0 && i + rowAmount >= tempSize)
 		{
-			i = i + rowAmount- residue;
+			i = i + rowAmount - residue;
 			tempSize = matrixSize;
 			rowAmount = residue;
 			first = false;
@@ -197,6 +229,7 @@ int main(int argc, char* argv[])
 		t2 = MPI_Wtime();
 		if (matrixSize <= 20)
 		{
+			cout << "\nResult matrix:\n";
 			for (int i = 0; i < matrixSize; i++)
 			{
 				for (int j = 0; j < matrixSize; j++)
@@ -206,7 +239,7 @@ int main(int argc, char* argv[])
 				cout << "\n";
 			}
 		}
-		cout << "Time: " << (t2 - t1);
+		cout << "\nTime: " << (t2 - t1);
 	}
 
 	MPI_Finalize();
