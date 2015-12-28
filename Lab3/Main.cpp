@@ -56,12 +56,12 @@ int main(int argc, char* argv[])
 	}
 	MPI_Bcast(&matrixSize, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
-	int **A = initMatrix(matrixSize);
-	int **B = initMatrix(matrixSize);
-	int **C = initMatrix(matrixSize);
-
+	int **A, **B, **C;
 	if (rank == 0)
 	{
+		A = initMatrix(matrixSize);
+		B = initMatrix(matrixSize);
+		C = initMatrix(matrixSize);
 		A = fillInMatrix(A, matrixSize);
 		B = fillInMatrix(B, matrixSize);
 		C = fillInZeroMatrix(C, matrixSize);
@@ -89,136 +89,186 @@ int main(int argc, char* argv[])
 		}
 	}
 
-	MPI_Barrier(MPI_COMM_WORLD);
-
 	int residue = matrixSize % size;
 	int rowAmount = matrixSize / size;
 	int columnAmount = rowAmount;
-	int tempSize = size*rowAmount;
 
+	//Если остаток > 0 и это один из последних потоков,
+	//то он должен принять на 1 больше столбцов
+	if (residue > 0 && size - rank <= residue)
+	{
+		columnAmount++;
+	}
+	int *column = new int[matrixSize*columnAmount];
+
+	//0 поток рассылает столбцы матрицы остальным потокам
 	if (rank == 0)
 	{
 		t1 = MPI_Wtime();
-	}
-	bool first = true;
-	for (int i = 0; i < tempSize; i += rowAmount)
-	{
-		if (rank == 0)
+		int r = 0;
+		for (int m = 1; m < size; m++)
 		{
-			//0 поток вычисляет сам первую часть матрицы
-			for (int q = 0; q < rowAmount; q++)
-			{
-				for (int l = 0; l < columnAmount; l++)
-				{
-					int c = 0;
-					for (int j = 0; j < matrixSize; j++)
-					{
-						c += A[i + q][j] * B[j][l];
-					}
-					C[i + q][l] = c;
-				}
-			}
-
-			int r = 0;
-			//Посылаем потокам части матрицы
-			for (int m = 1; m < size; m++)
-			{
-				int amount = columnAmount;
-				//Если есть остаток, то последним потокам посылаем на 1 больше столбцов
-				if (residue > 0 && size - m <= residue)
-				{
-					amount++;
-				}
-				int *row = new int[matrixSize*rowAmount];
-				int *column = new int[matrixSize*amount];
-				int n;
-				if (rowAmount > amount)
-					n = rowAmount;
-				else
-					n = amount;
-				for (int l = 0; l < n; l++)
-				{
-					for (int j = 0; j < matrixSize; j++)
-					{
-						if (l < rowAmount)
-							row[j + l*matrixSize] = A[i + l][j];
-						if (l < amount)
-							column[j + l*matrixSize] = B[j][m*columnAmount + l + r];
-					}
-				}
-				MPI_Send(row, matrixSize*rowAmount, MPI_INT, m, m, MPI_COMM_WORLD);
-				MPI_Send(column, matrixSize*amount, MPI_INT, m, m, MPI_COMM_WORLD);
-				//если m потоку послали на 1 больше столбцов, 
-				//то m+1 поток должен получить столбцы из исходной матрицы со смещением += 1
-				if (amount > columnAmount)
-					r++;
-			}
-			r = 0;
-			for (int m = 1; m < size; m++)
-			{
-				int amount = columnAmount;
-				//Если есть остаток, то последним потокам посылаем на 1 больше столбцов
-				if (residue > 0 && size - m <= residue)
-				{
-					amount++;
-				}
-				//Принимаем подсчитанные элементы матрицы от других потоков
-				//и заполняем ими конечную матрицу
-				MPI_Status status;
-				int * elemsC = new int[rowAmount*amount];
-				MPI_Recv(elemsC, rowAmount*amount, MPI_INT, m, m, MPI_COMM_WORLD, &status);
-				for (int q = 0; q < rowAmount; q++)
-				{
-					for (int l = 0; l < amount; l++)
-					{
-						C[i + q][m*columnAmount + l + r] = elemsC[l + amount*q];
-					}
-				}
-				if (amount > columnAmount)
-					r++;
-			}
-		}
-		else
-		{
-			//Все ненулевые потоки принимают части матрицы фиксированного размера,
-			//считают элементы для конечной матрицы и посылают их 0 потоку
-			MPI_Status rowStatus, columnStatus;
 			int amount = columnAmount;
-			//Если остаток > 0 и это один из последних потоков,
-			//то он должен принять на 1 больше столбцов
-			if (residue > 0 && size - rank <= residue)
+			//Если есть остаток, то последним потокам посылаем на 1 больше столбцов
+			if (residue > 0 && size - m <= residue)
 			{
 				amount++;
 			}
-			int * row = new int[matrixSize*rowAmount];
-			int *column = new int[matrixSize*amount];
-			MPI_Recv(row, matrixSize*rowAmount, MPI_INT, 0, rank, MPI_COMM_WORLD, &rowStatus);
-			MPI_Recv(column, matrixSize*amount, MPI_INT, 0, rank, MPI_COMM_WORLD, &columnStatus);
+			int *sendingColumn = new int[matrixSize*amount];
 
-			int * elemsC = new int[rowAmount*amount];
-			for (int q = 0; q < rowAmount; q++)
+			for (int l = 0; l < amount; l++)
 			{
-				for (int l = 0; l < amount; l++)
+				for (int j = 0; j < matrixSize; j++)
 				{
-					int c = 0;
-					for (int k = 0; k < matrixSize; k++)
-					{
-						c += row[k + q*matrixSize] * column[k + l*matrixSize];
-					}
-					elemsC[l + q*amount] = c;
+					sendingColumn[j + l*matrixSize] = B[j][m*columnAmount + l + r];
 				}
 			}
-			MPI_Send(elemsC, rowAmount*amount, MPI_INT, 0, rank, MPI_COMM_WORLD);
+
+			/*for (int e = 0; e < matrixSize*amount; e++)
+			{
+				cout << "rank: " << m << " elem: " << e << " - " << sendingColumn[e] << "\n";
+			}
+			cout << "\n";*/
+			MPI_Send(sendingColumn, matrixSize*amount, MPI_INT, m, m, MPI_COMM_WORLD);
+			//если m потоку послали на 1 больше столбцов, 
+			//то m+1 поток должен получить столбцы из исходной матрицы со смещением += 1
+			if (amount > columnAmount)
+				r++;
+		}
+	}
+	else
+	{
+		//Все ненулевые потоки принимают столбцы матрицы
+		MPI_Status status;
+		MPI_Recv(column, matrixSize*columnAmount, MPI_INT, 0, rank, MPI_COMM_WORLD, &status);
+		/*for (int e = 0; e < matrixSize*columnAmount; e++)
+		{
+		cout << "rank: " << rank << " elem: " << e << " - " << column[e] << "\n";
+		}
+		cout << "\n";*/
+	}
+
+	//0 поток рассылает строки матрицы остальным потокам
+	if (rank == 0)
+	{
+		int r = 0;
+		for (int k = 0; k < size; k++)
+		{
+			int amount = rowAmount;
+			if (residue > 0 && size - k <= residue)
+			{
+				amount++;
+			}
+			int *row = new int[matrixSize*amount];
+			for (int l = 0; l < amount; l++)
+			{
+				for (int j = 0; j < matrixSize; j++)
+				{
+					row[j + l*matrixSize] = A[k*rowAmount + l + r][j];
+				}
+			}
+			/*cout << "k: " << k<<"\n";
+			for (int e = 0; e < matrixSize*amount; e++)
+			{
+			cout << row[e] << " ";
+			}
+			cout << "\n";*/
+
+			//Посылаем потокам строки матрицы
+			for (int m = 1; m < size; m++)
+			{
+				MPI_Send(row, matrixSize*amount, MPI_INT, m, k, MPI_COMM_WORLD);
+			}
+			if (amount > rowAmount)
+				r++;
+		}
+	}
+	else
+	{
+		int * elemsC = new int[columnAmount*matrixSize];
+		int r = 0;
+		//ненулевые потоки принимают строки матрицы
+		//считают свои квадраты матрицы
+		//и отправляют их нулевому потоку
+		for (int k = 0; k < size; k++)
+		{
+			int n = rowAmount;
+			if (residue > 0 && size - k <= residue)
+			{
+				n++;
+			}
+			MPI_Status rowStatus;
+			int * row = new int[matrixSize*n];
+			MPI_Recv(row, matrixSize*n, MPI_INT, 0, k, MPI_COMM_WORLD, &rowStatus);
+
+			/*cout << "rank: " << rank << "\n";
+			for (int e = 0; e < matrixSize*n; e++)
+			{
+				cout << row[e] << " ";
+			}
+			cout << "\n";*/
+
+			for (int q = 0; q < columnAmount; q++)
+			{
+				int offset = matrixSize - rowAmount;
+				for (int l = 0; l < n; l++)
+				{
+					int c = 0;
+					for (int t = 0; t < matrixSize; t++)
+					{
+						c += row[t + l*matrixSize] * column[t + q*matrixSize];
+
+					}
+					//cout <<"rank: "<<rank<<" "<< c<<"\n";
+					int index = l + q*rowAmount + q * offset + k*rowAmount + r;
+					elemsC[index] = c;// k*rowAmount*columnAmount] = c;
+				}
+			}
+			if (n > rowAmount)
+				r++;
+		}
+		MPI_Send(elemsC, columnAmount*matrixSize, MPI_INT, 0, rank, MPI_COMM_WORLD);
+	}
+
+
+	if (rank == 0)
+	{
+		//0 поток считает свою часть матрицы
+		for (int i = 0; i < columnAmount; i++)
+		{
+			for (int j = 0; j < matrixSize; j++)
+			{
+				int c = 0;
+				for (int k = 0; k < matrixSize; k++)
+				{
+					c += A[j][k] * B[k][i];
+				}
+				C[j][i] = c;
+			}
 		}
 
-		//Если мы по строкам дошли до конца челочисленного деления,
-		//то надо разослать всем остаток строк
-		if (first && residue > 0 && i + rowAmount >= tempSize)
+		int r = 0;
+		for (int m = 1; m < size; m++)
 		{
-			i = i + rowAmount - residue;
-			tempSize = matrixSize;
-			rowAmount = residue;
-			first = false;
+			int amount = columnAmount;
+			//Если есть остаток, то последним потокам посылаем на 1 больше столбцов
+			if (residue > 0 && size - m <= residue)
+			{
+				amount++;
+			}
+			MPI_Status status;
+			int * receivedColumns = new int[matrixSize*amount];
+			MPI_Recv(receivedColumns, matrixSize*amount, MPI_INT, m, m, MPI_COMM_WORLD, &status);
+
+			for (int l = 0; l < amount; l++)
+			{
+				for (int j = 0; j < matrixSize; j++)
+				{
+					C[j][m*columnAmount + l + r] = receivedColumns[j + l*matrixSize];
+				}
+			}
+			if (amount > columnAmount)
+				r++;
 		}
 	}
 
